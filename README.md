@@ -1,1 +1,3 @@
 # Auto-lending-credit_risk-project_q1_2023
+
+I applied for a job at a sub-prime lender for auto loans and had to do the take home project. I was able to whip this up in Python a few hours. It's pretty simple, I loaded the files, did some brief exploratory data analysis(but the dataset was only 1000 rows and clean, no outliers or anything), looked into some segmentation but then decided it was easiest to just build some ML models(log regression, xg boost, lg boost and random forest) and see which one was the best one. I passed the take home project but didnt get the job sadly. However, the work was done!
