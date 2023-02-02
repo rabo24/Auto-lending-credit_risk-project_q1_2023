@@ -1,0 +1,236 @@
+import os
+import pandas as pd
+import numpy as np
+from bs4 import BeautifulSoup as Soup
+
+import yfinance as yf
+from yahoo_fin.stock_info import get_data
+import yahoo_fin.stock_info as si
+import ta
+from ta import add_all_ta_features
+from ta.momentum import RSIIndicator
+from ta.trend import macd 
+
+import datetime
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.metrics import confusion_matrix, classification_report
+from sklearn import metrics
+import xgboost as xg
+from sklearn.metrics import mean_squared_error as mse
+
+import sqlite3 
+from os import path
+from pathlib import Path 
+
+import statistics
+
+df = pd.read_csv('/Users/john_rabovich/Desktop/Data science/Credit_Data.csv', index_col = 'OBS#')
+
+"""
+Doing some basic exploratory data analysis below ie. checking for null values, column data types, potential outliers, etc..
+Also separating into predictors and target
+"""
+df.isnull().any()
+df.dtypes
+
+X = df.drop(['DEFAULT'], axis = 1)
+y = df['DEFAULT']
+
+X_train, X_valid, y_train, y_test = train_test_split(X, y, train_size = 0.8, test_size = 0.2, random_state = 0)
+
+
+feature_corr_2_target = X_train.apply(lambda x: x.corr(y_train)) 
+
+feature_mean = X_train.apply(lambda x: x.mean())
+feature_std = X_train.apply(lambda x: x.std())
+
+X_train.AMOUNT.max()
+X_train.AMOUNT.std()
+X_train.loc[X_train['AMOUNT'] > X_train['AMOUNT'].mean() + 2*X_train['AMOUNT'].std()]['AMOUNT']
+
+
+df.loc[df['AMOUNT'] >df['AMOUNT'].mean() + 2*df['AMOUNT'].std()]['DEFAULT'].value_counts()
+df.loc[df['DURATION'] > df['DURATION'].mean() + 2*df['DURATION'].std()]['DEFAULT'].value_counts()
+
+
+df.loc[(df['AMOUNT'] >df['AMOUNT'].mean() + 1*df['AMOUNT'].std()) &
+       (df['DURATION'] > df['DURATION'].mean() + 1*df['DURATION'].std())]['DEFAULT'].value_counts()
+
+
+
+
+"""
+IDEA: may be able to make waterfall on applications with duration 1 std dev above the mean AND amount 1 std dev above the mean . 
+if i make a rule remember to talk about about how I used feature correaltion to target to identify 
+that amount and duration were the most positively corrlated to target 
+
+Going to do rule strategy below and breakd dataset into test and training set 
+
+My rule is decent. When im doing my prsentation make suure that after overview part i go into the rule building methodologay and model building methodology separately
+UPDATE: Don't think im going to end up doing the rule 
+
+"""
+
+rule_df_random_sample = df.sample(n = 300)
+rule_df_train = rule_df_random_sample.sample(n = 220)
+rule_df_test = rule_df_random_sample[~rule_df_random_sample.index.isin(rule_df_train.index)]
+
+rule_train_metrics = rule_df_train.loc[(rule_df_train['AMOUNT'] > rule_df_train['AMOUNT'].mean() + rule_df_train['AMOUNT'].std()) &
+                                       (rule_df_train['DURATION'] >rule_df_train['DURATION'].mean() + rule_df_train['DURATION'].std())]['DEFAULT'].value_counts()
+
+rule_test_metrics = rule_df_test.loc[(rule_df_test['AMOUNT'] > rule_df_test['AMOUNT'].mean() + rule_df_test['AMOUNT'].std()) &
+                                       (rule_df_test['DURATION'] > rule_df_test['DURATION'].mean() + rule_df_test['DURATION'].std())]['DEFAULT'].value_counts()
+
+
+
+"""
+ML modeling: Gooing to go over ml modeling now. I'm going to build on the whole dataset even though i may segment my rule strategy out later
+(maybe train on both and see which model performs better?)
+
+
+"""
+
+X_train_columns = list(X_train.columns)
+X_train_corr_matrix = X_train[X_train_columns].corr()
+
+X_train_corr_matrix.to_csv('/Users/john_rabovich/Desktop/Data science/X_train_corr_matrix.csv')
+
+#Did not end up using the below function
+
+def equation_maker(l):
+    string = ''
+    
+    for i in range(len(l)):
+        if i == 0:
+            string += l[i]
+            
+        else:
+            string += ' + ' + l[i]
+            
+    return string
+
+print(equation_maker(X_train_columns))
+
+
+"""
+Going to do feature importance analysis using log regression as well as some tree based models 
+
+https://machinelearningmastery.com/calculate-feature-importance-with-python/
+
+"""
+from sklearn.linear_model import LogisticRegression
+
+log_reg_model = LogisticRegression()
+log_reg_model.fit(X_train,y_train)
+log_reg_preds = log_reg_model.predict(X_valid)
+
+
+log_reg_model.intercept_
+log_reg_model.coef_
+
+log_reg_model.predict_proba(X_valid)
+
+log_reg_model.score(X_valid,y_test)
+
+
+fpr, tpr, threshold = metrics.roc_curve(y_test,log_reg_preds)
+
+roc_auc = metrics.auc(fpr, tpr)
+
+X_vars_updated = ['DURATION','NEW_CAR','FURNITURE','EDUCATION','RETRAINING','AMOUNT','INSTALL_RATE','MALE_DIV','CO-APPLICANT','PRESENT_RESIDENT',
+                      'PROP_UNKN_NONE','OTHER_INSTALL','RENT','JOB','NUM_DEPENDENTS']
+
+log_reg_model_V2 = LogisticRegression()
+log_reg_model_V2.fit(X_train[X_vars_updated],y_train)
+log_reg_preds_V2 = log_reg_model_V2.predict(X_valid[X_vars_updated])
+
+
+log_reg_model_V2.predict_proba(X_valid[X_vars_updated])
+log_reg_model_V2.score(X_valid[X_vars_updated],y_test)
+
+metrics.r2_score(y_test,log_reg_preds)
+
+fpr2, tpr2, threshold2 = metrics.roc_curve(y_test,log_reg_preds_V2)
+
+roc_auc_V2 = metrics.auc(fpr2, tpr2)
+
+"""
+First log reg model without removing vars outperformed second one where i only had the positively correlated to target vars
+Predicts default on OOS data with 76.5% accuracy whereas log reg with specific vars only has 72% accuracy and roc auc is .70 for all the predictors 
+and .59 for postively correlated vars
+If we compare this to the baseline of 29% fo the test set defaults, we are doing well.
+"""
+
+y_test.value_counts()
+
+import matplotlib.pyplot as plt
+plt.title('Receiver Operating Characteristic-Logistic Regression')
+plt.plot(fpr, tpr, 'b', label = 'AUC = %0.2f' % roc_auc)
+plt.legend(loc = 'lower right')
+plt.plot([0, 1], [0, 1],'r--')
+plt.xlim([0, 1])
+plt.ylim([0, 1])
+plt.ylabel('True Positive Rate')
+plt.xlabel('False Positive Rate')
+plt.show()
+
+"""
+Log reg model pretty good. Tomrrow try xgbm, lgbm, and random forests. And then see if you can build a model on the rule train segment and 
+the remaining datset without the rule train stuff
+
+
+
+"""
+from xgboost import XGBClassifier 
+
+xgb_model = XGBClassifier()
+xgb_model.fit(X_train,y_train)
+
+xgbm_preds = xgb_model.predict(X_valid)
+
+xgb_model.predict_proba(X_valid)
+
+xgb_model.score(X_valid,y_test)
+
+fpr, tpr, threshold = metrics.roc_curve(y_test,xgbm_preds)
+
+roc_auc = metrics.auc(fpr, tpr)
+
+"""
+accuracy of .755 for xgb classifier and roc auc is 0.68 vs log reg fn auc of .701. logisitc regression  outperforms
+
+"""
+
+import lightgbm as lgb
+lgbm_model = lgb.LGBMClassifier()
+lgbm_model.fit(X_train, y_train)
+
+lgbm_model.predict_proba(X_valid)
+lgbm_preds = lgbm_model.predict(X_valid)
+lgbm_model.score(X_valid,y_test)
+
+fpr, tpr, threshold = metrics.roc_curve(y_test,lgbm_preds)
+
+roc_auc = metrics.auc(fpr, tpr)
+
+"""
+lgbm sllightly outperforms xgbm but underperforms log reg fn
+
+
+"""
+
+from sklearn.ensemble import RandomForestClassifier
+
+rf_model = RandomForestClassifier()
+rf_model.fit(X_train, y_train)
+
+rf_model.predict_proba(X_valid)
+rf_preds = rf_model.predict(X_valid)
+rf_model.score(X_valid,y_test)
+
+fpr, tpr, threshold = metrics.roc_curve(y_test,rf_preds)
+
+roc_auc = metrics.auc(fpr, tpr)
